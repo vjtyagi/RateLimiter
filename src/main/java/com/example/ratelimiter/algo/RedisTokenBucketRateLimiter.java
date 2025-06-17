@@ -23,7 +23,7 @@ public class RedisTokenBucketRateLimiter implements RateLimiter {
                     -- Keys: [1] = base key for this API key
                     -- Args: [1] = current timestamp, [2] = capacity, [3] = refill rate per second, [4] = TTL
 
-                    local baseKey = Keys[1]
+                    local baseKey = KEYS[1]
                     local tokensKey = baseKey .. ':tokens'
                     local lastRefillKey = baseKey .. ':lastRefill'
 
@@ -75,7 +75,8 @@ public class RedisTokenBucketRateLimiter implements RateLimiter {
 
     private static final RedisScript<Long> RATE_LIMIT_SCRIPT = RedisScript.of(LUA_SCRIPT, Long.class);
 
-    public boolean allowRequestLUA(String apiKey) {
+    @Override
+    public boolean allowRequest(String apiKey) {
         String redisKey = "rate_limit:" + apiKey;
         long now = Instant.now().getEpochSecond();
         try {
@@ -93,8 +94,7 @@ public class RedisTokenBucketRateLimiter implements RateLimiter {
 
     }
 
-    @Override
-    public boolean allowRequest(String apiKey) {
+    public boolean allowRequestUnsafe(String apiKey) {
         String redisKey = "rate_limit:" + apiKey;
         long now = Instant.now().getEpochSecond();
         redisTemplate.opsForValue().setIfAbsent(redisKey + ":lastRefill", String.valueOf(now), 1, TimeUnit.DAYS);
