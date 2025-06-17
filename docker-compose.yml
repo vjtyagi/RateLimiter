@@ -16,7 +16,6 @@ services:
 
   redis:
     image: redis:7
-    container_name: myredis
     ports:
       - "6379:6379"
     networks:
@@ -24,7 +23,6 @@ services:
 
   load_balancer:
     image: nginx
-    container_name: nginx_lb
     ports:
       - "80:80"
     volumes:
@@ -35,7 +33,6 @@ services:
       - my-network
   postgres:
     image: postgres:16
-    container_name: postgres
     environment:
       - POSTGRES_DB=mydb
       - POSTGRES_USER=postgres
