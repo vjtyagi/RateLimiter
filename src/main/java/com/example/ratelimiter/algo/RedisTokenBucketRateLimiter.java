@@ -17,11 +17,12 @@ import lombok.extern.slf4j.Slf4j;
 public class RedisTokenBucketRateLimiter implements RateLimiter {
     private final RedisTemplate<String, String> redisTemplate;
     private final int capacity;
-    private final int refillRatePerSecond;
+    private final double refillRatePerSecond;
+    private final double refillRatePerMilliSecond;
     private final long ttl = 86400; // 1 day
     public static final String LUA_SCRIPT = """
                     -- Keys: [1] = base key for this API key
-                    -- Args: [1] = current timestamp, [2] = capacity, [3] = refill rate per second, [4] = TTL
+                    -- Args: [1] = current timestamp(ms), [2] = capacity, [3] = refill rate per ms, [4] = TTL
 
                     local baseKey = KEYS[1]
                     local tokensKey = baseKey .. ':tokens'
@@ -45,9 +46,9 @@ public class RedisTokenBucketRateLimiter implements RateLimiter {
                     local currentTokens = tonumber(redis.call('GET', tokensKey))
                     local lastRefill = tonumber(redis.call('GET', lastRefillKey))
 
-                    -- Calculate tokens to add based on time elapsed
+                    -- Calculate tokens to add based on time elapsed (in milliseconds)
                     local timeElapsed = now - lastRefill
-                    local tokensToAdd = timeElapsed * refillRate
+                    local tokensToAdd = math.floor(timeElapsed * refillRate)
                     local newTokens = math.min(capacity, currentTokens + tokensToAdd)
 
                     -- Update state if time has elapsed (refill occurred)
@@ -67,10 +68,11 @@ public class RedisTokenBucketRateLimiter implements RateLimiter {
 
     public RedisTokenBucketRateLimiter(RedisTemplate<String, String> redisTemplate,
             @Value("${ratelimiter.bucket.capacity}") int capacity,
-            @Value("${ratelimiter.refill-rate}") int refillRatePerSecond) {
+            @Value("${ratelimiter.refill-rate}") double refillRatePerSecond) {
         this.redisTemplate = redisTemplate;
         this.capacity = capacity;
         this.refillRatePerSecond = refillRatePerSecond;
+        this.refillRatePerMilliSecond = refillRatePerSecond / 1000.0;
     }
 
     private static final RedisScript<Long> RATE_LIMIT_SCRIPT = RedisScript.of(LUA_SCRIPT, Long.class);
@@ -78,13 +80,13 @@ public class RedisTokenBucketRateLimiter implements RateLimiter {
     @Override
     public boolean allowRequest(String apiKey) {
         String redisKey = "rate_limit:" + apiKey;
-        long now = Instant.now().getEpochSecond();
+        long now = Instant.now().toEpochMilli();
         try {
             Long result = redisTemplate.execute(RATE_LIMIT_SCRIPT,
                     Collections.singletonList(redisKey), // keys
                     String.valueOf(now), // args
                     String.valueOf(capacity),
-                    String.valueOf(refillRatePerSecond),
+                    String.valueOf(refillRatePerMilliSecond),
                     String.valueOf(ttl));
             return result != null && result == 1;
         } catch (Exception e) {
@@ -96,7 +98,7 @@ public class RedisTokenBucketRateLimiter implements RateLimiter {
 
     public boolean allowRequestUnsafe(String apiKey) {
         String redisKey = "rate_limit:" + apiKey;
-        long now = Instant.now().getEpochSecond();
+        long now = Instant.now().toEpochMilli();
         redisTemplate.opsForValue().setIfAbsent(redisKey + ":lastRefill", String.valueOf(now), 1, TimeUnit.DAYS);
         redisTemplate.opsForValue().setIfAbsent(redisKey + ":tokens", String.valueOf(capacity), 1, TimeUnit.DAYS);
 
@@ -104,7 +106,7 @@ public class RedisTokenBucketRateLimiter implements RateLimiter {
         long tokens = Long.parseLong(redisTemplate.opsForValue().get(redisKey + ":tokens"));
 
         long timeElapsed = now - lastRefill;
-        long newTokens = Math.min(capacity, tokens + (timeElapsed * refillRatePerSecond));
+        long newTokens = Math.min(capacity, tokens + (long) (timeElapsed * refillRatePerMilliSecond));
         if (timeElapsed > 0) {
             redisTemplate.opsForValue().set(redisKey + ":tokens", String.valueOf(newTokens));
             redisTemplate.opsForValue().set(redisKey + ":lastRefill", String.valueOf(now));
